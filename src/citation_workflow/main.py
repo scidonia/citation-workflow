@@ -700,23 +700,24 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
         }
         
         # Always save results to JSON file
-        if not output:
+        output_file = output
+        if not output_file:
             # Generate default output filename based on PDF name and timestamp
             import datetime
             pdf_name = Path(pdf_path).stem
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output = f"citations_{pdf_name}_{timestamp}.json"
+            output_file = f"citations_{pdf_name}_{timestamp}.json"
         
         try:
-            with open(output, 'w', encoding='utf-8') as f:
+            with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)
-            console.print(f"[green]✓ Results saved to: {output}[/green]")
+            console.print(f"[green]✓ Results saved to: {output_file}[/green]")
         except Exception as e:
             console.print(f"[red]Failed to save results: {e}[/red]")
             raise click.ClickException(f"Failed to save results: {e}")
         
         # Display results in console if no specific output file was requested
-        if not output or output.startswith("citations_"):
+        if not output or output_file.startswith("citations_"):
             # Display results in a nice table
             console.print("\n")
             console.print(Panel.fit(
