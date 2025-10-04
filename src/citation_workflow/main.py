@@ -699,16 +699,24 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
             }
         }
         
-        # Output results
-        if output:
-            try:
-                with open(output, 'w', encoding='utf-8') as f:
-                    json.dump(results, f, indent=2, ensure_ascii=False)
-                console.print(f"[green]✓ Results saved to: {output}[/green]")
-            except Exception as e:
-                console.print(f"[red]Failed to save results: {e}[/red]")
-                raise click.ClickException(f"Failed to save results: {e}")
-        else:
+        # Always save results to JSON file
+        if not output:
+            # Generate default output filename based on PDF name and timestamp
+            import datetime
+            pdf_name = Path(pdf_path).stem
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            output = f"citations_{pdf_name}_{timestamp}.json"
+        
+        try:
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            console.print(f"[green]✓ Results saved to: {output}[/green]")
+        except Exception as e:
+            console.print(f"[red]Failed to save results: {e}[/red]")
+            raise click.ClickException(f"Failed to save results: {e}")
+        
+        # Display results in console if no specific output file was requested
+        if not output or output.startswith("citations_"):
             # Display results in a nice table
             console.print("\n")
             console.print(Panel.fit(
@@ -738,7 +746,7 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
                 for i, citation in enumerate(scored_citations[:5]):
                     console.print(f"\n[bold cyan]{i+1}. Score: {citation['llm_score']}/5[/bold cyan]")
                     console.print(f"[dim]Pages: {citation.get('start_page', '?')}-{citation.get('end_page', '?')}[/dim]")
-                    console.print(f"[white]{citation['text'][:200]}{'...' if len(citation['text']) > 200 else ''}[/white]")
+                    console.print(f"[white]{citation['text']}[/white]")
                     console.print(f"[yellow]LLM: {citation['llm_explanation']}[/yellow]")
     
     # Run the async workflow
