@@ -133,12 +133,13 @@ async def extract_pdf_text(pdf_path: str, api_key: Optional[str] = None, use_cac
             # Use longer timeout for PDF extraction (10 minutes)
             import httpx
             timeout = httpx.Timeout(600.0)  # 10 minutes
-            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
-                with open(pdf_path, 'rb') as f:
-                    pdf_bytes = f.read()
-                
-                progress.update(task, description="Sending PDF to BookWyrm API...")
-                response = await client.extract_pdf(pdf_bytes=pdf_bytes)
+            async with httpx.AsyncClient(timeout=timeout) as http_client:
+                async with AsyncBookWyrmClient(api_key=api_key, client=http_client) as client:
+                    with open(pdf_path, 'rb') as f:
+                        pdf_bytes = f.read()
+                    
+                    progress.update(task, description="Sending PDF to BookWyrm API...")
+                    response = await client.extract_pdf(pdf_bytes=pdf_bytes)
                 
                 progress.update(task, description="Processing extracted pages...")
                 raw_text = ""
@@ -223,19 +224,20 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
             # Use much longer timeout for large text processing (30 minutes)
             import httpx
             timeout = httpx.Timeout(1800.0)  # 30 minutes
-            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
-                async for response in client.stream_process_text(
-                    text=text,
-                    chunk_size=1000,  # Reasonable chunk size for citation analysis
-                    offsets=True
-                ):
-                    if isinstance(response, TextSpanResult):
-                        chunks.append(TextSpan(
-                            text=response.text,
-                            start_char=response.start_char,
-                            end_char=response.end_char
-                        ))
-                        progress.update(task, description=f"Processed {len(chunks)} chunks...")
+            async with httpx.AsyncClient(timeout=timeout) as http_client:
+                async with AsyncBookWyrmClient(api_key=api_key, client=http_client) as client:
+                    async for response in client.stream_process_text(
+                        text=text,
+                        chunk_size=1000,  # Reasonable chunk size for citation analysis
+                        offsets=True
+                    ):
+                        if isinstance(response, TextSpanResult):
+                            chunks.append(TextSpan(
+                                text=response.text,
+                                start_char=response.start_char,
+                                end_char=response.end_char
+                            ))
+                            progress.update(task, description=f"Processed {len(chunks)} chunks...")
         
         except BookWyrmAPIError as e:
             console.print(f"[red]BookWyrm API Error during text processing: {e}[/red]")
@@ -353,25 +355,26 @@ async def find_citations(chunks: List[TextSpan], query: str, pdf_path: str, api_
             # Use longer timeout for citation search (20 minutes)
             import httpx
             timeout = httpx.Timeout(1200.0)  # 20 minutes
-            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
-                async for response in client.stream_citations(
-                    chunks=chunks,
-                    question=query
-                ):
-                    if isinstance(response, CitationProgressUpdate):
-                        progress.update(task, description=f"Progress: {response.message}")
-                    elif isinstance(response, CitationStreamResponse):
-                        citation = response.citation
-                        citations.append({
-                            'text': citation.text,
-                            'reasoning': citation.reasoning,
-                            'quality': citation.quality,
-                            'start_chunk': citation.start_chunk,
-                            'end_chunk': citation.end_chunk
-                        })
-                        progress.update(task, description=f"Found {len(citations)} citations...")
-                    elif isinstance(response, CitationSummaryResponse):
-                        progress.update(task, description=f"Complete: {response.total_citations} total citations")
+            async with httpx.AsyncClient(timeout=timeout) as http_client:
+                async with AsyncBookWyrmClient(api_key=api_key, client=http_client) as client:
+                    async for response in client.stream_citations(
+                        chunks=chunks,
+                        question=query
+                    ):
+                        if isinstance(response, CitationProgressUpdate):
+                            progress.update(task, description=f"Progress: {response.message}")
+                        elif isinstance(response, CitationStreamResponse):
+                            citation = response.citation
+                            citations.append({
+                                'text': citation.text,
+                                'reasoning': citation.reasoning,
+                                'quality': citation.quality,
+                                'start_chunk': citation.start_chunk,
+                                'end_chunk': citation.end_chunk
+                            })
+                            progress.update(task, description=f"Found {len(citations)} citations...")
+                        elif isinstance(response, CitationSummaryResponse):
+                            progress.update(task, description=f"Complete: {response.total_citations} total citations")
         
         except BookWyrmAPIError as e:
             console.print(f"[red]BookWyrm API Error during citation search: {e}[/red]")
