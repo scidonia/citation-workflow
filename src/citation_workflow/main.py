@@ -130,7 +130,10 @@ async def extract_pdf_text(pdf_path: str, api_key: Optional[str] = None, use_cac
         task = progress.add_task("Extracting PDF text...", total=None)
         
         try:
-            async with AsyncBookWyrmClient(api_key=api_key) as client:
+            # Use longer timeout for PDF extraction (10 minutes)
+            import httpx
+            timeout = httpx.Timeout(600.0)  # 10 minutes
+            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
                 with open(pdf_path, 'rb') as f:
                     pdf_bytes = f.read()
                 
@@ -217,7 +220,10 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
         task = progress.add_task("Processing text chunks...", total=None)
         
         try:
-            async with AsyncBookWyrmClient(api_key=api_key) as client:
+            # Use much longer timeout for large text processing (30 minutes)
+            import httpx
+            timeout = httpx.Timeout(1800.0)  # 30 minutes
+            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
                 async for response in client.stream_process_text(
                     text=text,
                     chunk_size=1000,  # Reasonable chunk size for citation analysis
@@ -344,7 +350,10 @@ async def find_citations(chunks: List[TextSpan], query: str, pdf_path: str, api_
         task = progress.add_task("Searching for citations...", total=None)
         
         try:
-            async with AsyncBookWyrmClient(api_key=api_key) as client:
+            # Use longer timeout for citation search (20 minutes)
+            import httpx
+            timeout = httpx.Timeout(1200.0)  # 20 minutes
+            async with AsyncBookWyrmClient(api_key=api_key, timeout=timeout) as client:
                 async for response in client.stream_citations(
                     chunks=chunks,
                     question=query
