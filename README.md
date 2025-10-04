@@ -111,10 +111,10 @@ The tool outputs either to console or JSON file with:
 ## Workflow Steps
 
 1. **PDF Extraction**: Extracts text from PDF while preserving page structure
-2. **Text Processing**: Uses BookWyrm's phrasal model to create meaningful text chunks
-3. **Citation Search**: Finds relevant citations using BookWyrm's citation model
-4. **LLM Scoring**: Each citation is scored by GPT-3.5-turbo on relevance (1-5 scale)
-5. **Results**: Citations are sorted by LLM score and include page references
+1. **Text Processing**: Uses BookWyrm's phrasal model to create meaningful text chunks
+1. **Citation Search**: Finds relevant citations using BookWyrm's citation model
+1. **LLM Scoring**: Each citation is scored by GPT-3.5-turbo on relevance (1-5 scale)
+1. **Results**: Citations are sorted by LLM score and include page references
 
 ## API Requirements
 

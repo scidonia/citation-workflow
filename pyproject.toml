@@ -5,11 +5,11 @@ description = "CLI for extracting text from PDFs, finding citations, and scoring
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bookwyrm>=0.1.7",
-    "click>=8.0.0",
-    "openai>=1.0.0",
-    "python-dotenv>=1.0.0",
-    "rich>=13.0.0",
+  "bookwyrm>=0.1.7",
+  "click>=8.0.0",
+  "openai>=1.0.0",
+  "python-dotenv>=1.0.0",
+  "rich>=13.0.0",
 ]
 
 [build-system]
