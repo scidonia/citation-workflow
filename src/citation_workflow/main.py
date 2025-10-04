@@ -237,13 +237,31 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
             console.print(f"  • API key present: {'Yes' if api_key else 'No'}")
             console.print(f"  • Text length: {len(text):,} characters")
             console.print(f"  • Error details: {str(e)}")
+            console.print(f"  • Exception type: {type(e).__name__}")
+            
+            # Try to get more details from the exception
             if hasattr(e, 'status_code'):
                 console.print(f"  • HTTP status code: {e.status_code}")
             if hasattr(e, 'response') and e.response:
                 try:
-                    console.print(f"  • Response content: {e.response.text[:500]}...")
-                except:
-                    console.print("  • Response content: Unable to read")
+                    console.print(f"  • Response status: {e.response.status_code}")
+                    console.print(f"  • Response headers: {dict(e.response.headers)}")
+                    console.print(f"  • Response content: {e.response.text}")
+                except Exception as resp_err:
+                    console.print(f"  • Response read error: {resp_err}")
+            
+            # Check for underlying exception
+            if hasattr(e, '__cause__') and e.__cause__:
+                console.print(f"  • Underlying cause: {type(e.__cause__).__name__}: {e.__cause__}")
+            if hasattr(e, '__context__') and e.__context__:
+                console.print(f"  • Exception context: {type(e.__context__).__name__}: {e.__context__}")
+            
+            # Print full exception details in debug mode
+            if os.getenv('BOOKWYRM_DEBUG') == '1':
+                import traceback
+                console.print("[dim]Full traceback:[/dim]")
+                console.print(traceback.format_exc())
+            
             console.print("[yellow]Possible solutions:[/yellow]")
             console.print("  • Check your BookWyrm API key is valid")
             console.print("  • Verify network connectivity")
@@ -254,6 +272,19 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
             console.print(f"[red]Unexpected error during text processing: {e}[/red]")
             console.print(f"[dim]Error type: {type(e).__name__}[/dim]")
             console.print(f"[dim]Text length: {len(text):,} characters[/dim]")
+            
+            # Check for underlying exception details
+            if hasattr(e, '__cause__') and e.__cause__:
+                console.print(f"[dim]Underlying cause: {type(e.__cause__).__name__}: {e.__cause__}[/dim]")
+            if hasattr(e, '__context__') and e.__context__:
+                console.print(f"[dim]Exception context: {type(e.__context__).__name__}: {e.__context__}[/dim]")
+            
+            # Print full traceback in debug mode
+            if os.getenv('BOOKWYRM_DEBUG') == '1':
+                import traceback
+                console.print("[dim]Full traceback:[/dim]")
+                console.print(traceback.format_exc())
+            
             raise click.ClickException(f"Text processing failed: {e}")
     
     console.print(f"[green]✓ Created {len(chunks)} text chunks[/green]")
