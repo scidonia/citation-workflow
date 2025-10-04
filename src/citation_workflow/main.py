@@ -264,11 +264,25 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
                 console.print("[dim]Full traceback:[/dim]")
                 console.print(traceback.format_exc())
             
+            # Specific guidance based on error type
+            underlying_error = None
+            if hasattr(e, '__cause__') and e.__cause__:
+                underlying_error = e.__cause__
+            
             console.print("[yellow]Possible solutions:[/yellow]")
-            console.print("  • Check your BookWyrm API key is valid")
-            console.print("  • Verify network connectivity")
-            console.print("  • Try with a smaller text sample")
-            console.print("  • Check BookWyrm service status")
+            if underlying_error and ('ReadTimeout' in str(type(underlying_error)) or 'timeout' in str(underlying_error).lower()):
+                console.print("  • [bold red]TIMEOUT ERROR[/bold red]: Text is too large or processing is taking too long")
+                console.print(f"  • Your text is {len(text):,} characters - this is very large!")
+                console.print("  • Try processing a smaller PDF or extract specific pages")
+                console.print("  • BookWyrm may have built-in limits for text processing")
+                console.print("  • Consider splitting the PDF into smaller sections")
+                if len(text) > 1000000:  # 1M+ characters
+                    console.print("  • [bold yellow]RECOMMENDATION[/bold yellow]: Your text exceeds 1M characters - this is likely too large")
+            else:
+                console.print("  • Check your BookWyrm API key is valid")
+                console.print("  • Verify network connectivity")
+                console.print("  • Try with a smaller text sample")
+                console.print("  • Check BookWyrm service status")
             raise click.ClickException(f"Text processing failed: {e}")
         except Exception as e:
             console.print(f"[red]Unexpected error during text processing: {e}[/red]")
