@@ -8,8 +8,12 @@ from typing import Dict, List, Optional, Tuple
 import click
 from dotenv import load_dotenv
 from openai import OpenAI
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.panel import Panel
+from rich.table import Table
 
-from bookwyrm import AsyncBookWyrmClient
+from bookwyrm import AsyncBookWyrmClient, BookWyrmAPIError
 from bookwyrm.models import (
     TextSpan, 
     TextSpanResult, 
@@ -20,6 +24,9 @@ from bookwyrm.models import (
 
 # Load environment variables
 load_dotenv()
+
+# Initialize rich console
+console = Console()
 
 
 class CharacterToPageMapper:
@@ -75,7 +82,24 @@ def clear_cache(pdf_path: str):
     if cache_dir.exists():
         import shutil
         shutil.rmtree(cache_dir)
-        click.echo(f"Cleared cache for {pdf_path}")
+        console.print(f"[yellow]Cleared cache for {pdf_path}[/yellow]")
+
+
+def validate_api_keys(bookwyrm_key: Optional[str], openai_key: Optional[str]):
+    """Validate that required API keys are present."""
+    errors = []
+    
+    if not bookwyrm_key:
+        errors.append("BookWyrm API key is required. Set BOOKWYRM_API_KEY environment variable or use --bookwyrm-api-key")
+    
+    if not openai_key:
+        errors.append("OpenAI API key is required. Set OPENAI_API_KEY environment variable or use --openai-api-key")
+    
+    if errors:
+        console.print("[red]Missing required API keys:[/red]")
+        for error in errors:
+            console.print(f"  • {error}")
+        raise click.ClickException("Missing required API keys")
 
 
 async def extract_pdf_text(pdf_path: str, api_key: Optional[str] = None, use_cache: bool = True) -> Tuple[str, CharacterToPageMapper]:
@@ -85,55 +109,79 @@ async def extract_pdf_text(pdf_path: str, api_key: Optional[str] = None, use_cac
     
     # Try to load from cache first
     if use_cache and extraction_cache.exists():
-        click.echo(f"Loading PDF text from cache: {extraction_cache}")
+        console.print(f"[blue]Loading PDF text from cache...[/blue]")
         try:
             with open(extraction_cache, 'r', encoding='utf-8') as f:
                 cached_data = json.load(f)
             raw_text = cached_data['raw_text']
             mapper = CharacterToPageMapper.from_dict(cached_data['page_mapper'])
-            click.echo(f"Loaded {len(raw_text)} characters from cache")
+            console.print(f"[green]✓ Loaded {len(raw_text):,} characters from cache[/green]")
             return raw_text, mapper
         except Exception as e:
-            click.echo(f"Cache read failed, extracting fresh: {e}")
+            console.print(f"[yellow]Cache read failed, extracting fresh: {e}[/yellow]")
     
-    click.echo(f"Extracting text from PDF: {pdf_path}")
+    console.print(f"[blue]Extracting text from PDF: {pdf_path}[/blue]")
     
-    async with AsyncBookWyrmClient(api_key=api_key) as client:
-        with open(pdf_path, 'rb') as f:
-            pdf_bytes = f.read()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console
+    ) as progress:
+        task = progress.add_task("Extracting PDF text...", total=None)
         
-        response = await client.extract_pdf(pdf_bytes=pdf_bytes)
+        try:
+            async with AsyncBookWyrmClient(api_key=api_key) as client:
+                with open(pdf_path, 'rb') as f:
+                    pdf_bytes = f.read()
+                
+                progress.update(task, description="Sending PDF to BookWyrm API...")
+                response = await client.extract_pdf(pdf_bytes=pdf_bytes)
+                
+                progress.update(task, description="Processing extracted pages...")
+                raw_text = ""
+                mapper = CharacterToPageMapper()
+                
+                for page in response.pages:
+                    page_text = ""
+                    # Concatenate all text blocks from the page
+                    for text_block in page.text_blocks:
+                        page_text += text_block.text + "\n"
+                    
+                    # Record page boundary before adding text
+                    mapper.add_page(page.page_number, page_text, len(raw_text))
+                    raw_text += page_text
+                
+                progress.update(task, description="Extraction complete!")
         
-        raw_text = ""
-        mapper = CharacterToPageMapper()
-        
-        for page in response.pages:
-            page_text = ""
-            # Concatenate all text blocks from the page
-            for text_block in page.text_blocks:
-                page_text += text_block.text + "\n"
-            
-            # Record page boundary before adding text
-            mapper.add_page(page.page_number, page_text, len(raw_text))
-            raw_text += page_text
-        
-        click.echo(f"Extracted {len(raw_text)} characters from {response.total_pages} pages")
-        
-        # Save to cache
-        if use_cache:
-            try:
-                cache_data = {
-                    'raw_text': raw_text,
-                    'page_mapper': mapper.to_dict(),
-                    'total_pages': response.total_pages
-                }
-                with open(extraction_cache, 'w', encoding='utf-8') as f:
-                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
-                click.echo(f"Saved extraction to cache: {extraction_cache}")
-            except Exception as e:
-                click.echo(f"Failed to save extraction cache: {e}")
-        
-        return raw_text, mapper
+        except BookWyrmAPIError as e:
+            console.print(f"[red]BookWyrm API Error: {e}[/red]")
+            console.print("[yellow]Possible causes:[/yellow]")
+            console.print("  • Invalid or missing BookWyrm API key")
+            console.print("  • Network connectivity issues")
+            console.print("  • PDF file is corrupted or unsupported")
+            console.print("  • BookWyrm service is temporarily unavailable")
+            raise click.ClickException(f"PDF extraction failed: {e}")
+        except Exception as e:
+            console.print(f"[red]Unexpected error during PDF extraction: {e}[/red]")
+            raise click.ClickException(f"PDF extraction failed: {e}")
+    
+    console.print(f"[green]✓ Extracted {len(raw_text):,} characters from {response.total_pages} pages[/green]")
+    
+    # Save to cache
+    if use_cache:
+        try:
+            cache_data = {
+                'raw_text': raw_text,
+                'page_mapper': mapper.to_dict(),
+                'total_pages': response.total_pages
+            }
+            with open(extraction_cache, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            console.print(f"[dim]Saved extraction to cache[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Failed to save extraction cache: {e}[/yellow]")
+    
+    return raw_text, mapper
 
 
 async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str] = None, use_cache: bool = True) -> List[TextSpan]:
@@ -143,33 +191,51 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
     
     # Try to load from cache first
     if use_cache and chunks_cache.exists():
-        click.echo(f"Loading text chunks from cache: {chunks_cache}")
+        console.print("[blue]Loading text chunks from cache...[/blue]")
         try:
             with open(chunks_cache, 'r', encoding='utf-8') as f:
                 cached_chunks = json.load(f)
             chunks = [TextSpan(**chunk_data) for chunk_data in cached_chunks]
-            click.echo(f"Loaded {len(chunks)} chunks from cache")
+            console.print(f"[green]✓ Loaded {len(chunks)} chunks from cache[/green]")
             return chunks
         except Exception as e:
-            click.echo(f"Chunks cache read failed, processing fresh: {e}")
+            console.print(f"[yellow]Chunks cache read failed, processing fresh: {e}[/yellow]")
     
-    click.echo("Processing text into chunks using phrasal model...")
+    console.print("[blue]Processing text into chunks using phrasal model...[/blue]")
     
     chunks = []
-    async with AsyncBookWyrmClient(api_key=api_key) as client:
-        async for response in client.stream_process_text(
-            text=text,
-            chunk_size=1000,  # Reasonable chunk size for citation analysis
-            offsets=True
-        ):
-            if isinstance(response, TextSpanResult):
-                chunks.append(TextSpan(
-                    text=response.text,
-                    start_char=response.start_char,
-                    end_char=response.end_char
-                ))
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Processing text chunks...", total=None)
+        
+        try:
+            async with AsyncBookWyrmClient(api_key=api_key) as client:
+                async for response in client.stream_process_text(
+                    text=text,
+                    chunk_size=1000,  # Reasonable chunk size for citation analysis
+                    offsets=True
+                ):
+                    if isinstance(response, TextSpanResult):
+                        chunks.append(TextSpan(
+                            text=response.text,
+                            start_char=response.start_char,
+                            end_char=response.end_char
+                        ))
+                        progress.update(task, description=f"Processed {len(chunks)} chunks...")
+        
+        except BookWyrmAPIError as e:
+            console.print(f"[red]BookWyrm API Error during text processing: {e}[/red]")
+            raise click.ClickException(f"Text processing failed: {e}")
+        except Exception as e:
+            console.print(f"[red]Unexpected error during text processing: {e}[/red]")
+            raise click.ClickException(f"Text processing failed: {e}")
     
-    click.echo(f"Created {len(chunks)} text chunks")
+    console.print(f"[green]✓ Created {len(chunks)} text chunks[/green]")
     
     # Save to cache
     if use_cache:
@@ -184,9 +250,9 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
             ]
             with open(chunks_cache, 'w', encoding='utf-8') as f:
                 json.dump(chunks_data, f, ensure_ascii=False, indent=2)
-            click.echo(f"Saved chunks to cache: {chunks_cache}")
+            console.print("[dim]Saved chunks to cache[/dim]")
         except Exception as e:
-            click.echo(f"Failed to save chunks cache: {e}")
+            console.print(f"[yellow]Failed to save chunks cache: {e}[/yellow]")
     
     return chunks
 
@@ -200,40 +266,60 @@ async def find_citations(chunks: List[TextSpan], query: str, pdf_path: str, api_
     
     # Try to load from cache first
     if use_cache and citations_cache.exists():
-        click.echo(f"Loading citations from cache: {citations_cache}")
+        console.print("[blue]Loading citations from cache...[/blue]")
         try:
             with open(citations_cache, 'r', encoding='utf-8') as f:
                 cached_data = json.load(f)
             if cached_data.get('query') == query:  # Verify query matches
                 citations = cached_data['citations']
-                click.echo(f"Loaded {len(citations)} citations from cache")
+                console.print(f"[green]✓ Loaded {len(citations)} citations from cache[/green]")
                 return citations
             else:
-                click.echo("Query mismatch in cache, finding fresh citations")
+                console.print("[yellow]Query mismatch in cache, finding fresh citations[/yellow]")
         except Exception as e:
-            click.echo(f"Citations cache read failed, finding fresh: {e}")
+            console.print(f"[yellow]Citations cache read failed, finding fresh: {e}[/yellow]")
     
-    click.echo(f"Finding citations for query: {query}")
+    console.print(f"[blue]Finding citations for query: {query[:100]}...[/blue]")
     
     citations = []
-    async with AsyncBookWyrmClient(api_key=api_key) as client:
-        async for response in client.stream_citations(
-            chunks=chunks,
-            question=query
-        ):
-            if isinstance(response, CitationProgressUpdate):
-                click.echo(f"Progress: {response.message}")
-            elif isinstance(response, CitationStreamResponse):
-                citation = response.citation
-                citations.append({
-                    'text': citation.text,
-                    'reasoning': citation.reasoning,
-                    'quality': citation.quality,
-                    'start_chunk': citation.start_chunk,
-                    'end_chunk': citation.end_chunk
-                })
-            elif isinstance(response, CitationSummaryResponse):
-                click.echo(f"Found {response.total_citations} total citations")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Searching for citations...", total=None)
+        
+        try:
+            async with AsyncBookWyrmClient(api_key=api_key) as client:
+                async for response in client.stream_citations(
+                    chunks=chunks,
+                    question=query
+                ):
+                    if isinstance(response, CitationProgressUpdate):
+                        progress.update(task, description=f"Progress: {response.message}")
+                    elif isinstance(response, CitationStreamResponse):
+                        citation = response.citation
+                        citations.append({
+                            'text': citation.text,
+                            'reasoning': citation.reasoning,
+                            'quality': citation.quality,
+                            'start_chunk': citation.start_chunk,
+                            'end_chunk': citation.end_chunk
+                        })
+                        progress.update(task, description=f"Found {len(citations)} citations...")
+                    elif isinstance(response, CitationSummaryResponse):
+                        progress.update(task, description=f"Complete: {response.total_citations} total citations")
+        
+        except BookWyrmAPIError as e:
+            console.print(f"[red]BookWyrm API Error during citation search: {e}[/red]")
+            raise click.ClickException(f"Citation search failed: {e}")
+        except Exception as e:
+            console.print(f"[red]Unexpected error during citation search: {e}[/red]")
+            raise click.ClickException(f"Citation search failed: {e}")
+    
+    console.print(f"[green]✓ Found {len(citations)} citations[/green]")
     
     # Save to cache
     if use_cache:
@@ -245,9 +331,9 @@ async def find_citations(chunks: List[TextSpan], query: str, pdf_path: str, api_
             }
             with open(citations_cache, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
-            click.echo(f"Saved citations to cache: {citations_cache}")
+            console.print("[dim]Saved citations to cache[/dim]")
         except Exception as e:
-            click.echo(f"Failed to save citations cache: {e}")
+            console.print(f"[yellow]Failed to save citations cache: {e}[/yellow]")
     
     return citations
 
@@ -264,7 +350,7 @@ def score_citations_with_llm(citations: List[dict], query: str, pdf_path: str, o
     citation_index_map = {}
     
     if use_cache and scores_cache.exists():
-        click.echo(f"Loading LLM scores from cache: {scores_cache}")
+        console.print("[blue]Loading LLM scores from cache...[/blue]")
         try:
             with open(scores_cache, 'r', encoding='utf-8') as f:
                 cached_scores = json.load(f)
@@ -284,12 +370,12 @@ def score_citations_with_llm(citations: List[dict], query: str, pdf_path: str, o
                     scored_citations.append(None)  # Placeholder
             
             if not citations_to_score:
-                click.echo(f"All {len(citations)} citations loaded from cache")
+                console.print(f"[green]✓ All {len(citations)} citations loaded from cache[/green]")
                 return [c for c in scored_citations if c is not None]
             else:
-                click.echo(f"Loaded {len(citations) - len(citations_to_score)} scores from cache, need to score {len(citations_to_score)} more")
+                console.print(f"[blue]Loaded {len(citations) - len(citations_to_score)} scores from cache, need to score {len(citations_to_score)} more[/blue]")
         except Exception as e:
-            click.echo(f"Scores cache read failed, scoring all fresh: {e}")
+            console.print(f"[yellow]Scores cache read failed, scoring all fresh: {e}[/yellow]")
             citations_to_score = citations
             scored_citations = []
             citation_index_map = {i: i for i in range(len(citations))}
@@ -301,15 +387,29 @@ def score_citations_with_llm(citations: List[dict], query: str, pdf_path: str, o
     if not citations_to_score:
         return scored_citations
     
-    click.echo(f"Scoring {len(citations_to_score)} citations with LLM...")
+    console.print(f"[blue]Scoring {len(citations_to_score)} citations with LLM...[/blue]")
     
-    client = OpenAI(api_key=openai_api_key)
+    try:
+        client = OpenAI(api_key=openai_api_key)
+    except Exception as e:
+        console.print(f"[red]Failed to initialize OpenAI client: {e}[/red]")
+        raise click.ClickException(f"OpenAI initialization failed: {e}")
+    
     new_scores = {}
     
-    for i, citation in enumerate(citations_to_score):
-        click.echo(f"Scoring citation {i+1}/{len(citations_to_score)}")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Scoring citations...", total=len(citations_to_score))
         
-        prompt = f"""
+        for i, citation in enumerate(citations_to_score):
+            progress.update(task, description=f"Scoring citation {i+1}/{len(citations_to_score)}")
+            
+            prompt = f"""
 You are evaluating how well a text citation answers a specific query about an event.
 
 Query: {query}
@@ -327,56 +427,60 @@ Please score this citation on a scale of 1-5:
 
 Respond with just the number (1-5) and a brief explanation.
 """
-        
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=100,
-                temperature=0.1
-            )
             
-            llm_response = response.choices[0].message.content.strip()
-            
-            # Extract score (first digit found)
-            score = None
-            for char in llm_response:
-                if char.isdigit() and 1 <= int(char) <= 5:
-                    score = int(char)
-                    break
-            
-            if score is None:
-                score = 3  # Default score if parsing fails
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100,
+                    temperature=0.1
+                )
                 
-            citation_with_score = citation.copy()
-            citation_with_score['llm_score'] = score
-            citation_with_score['llm_explanation'] = llm_response
+                llm_response = response.choices[0].message.content.strip()
+                
+                # Extract score (first digit found)
+                score = None
+                for char in llm_response:
+                    if char.isdigit() and 1 <= int(char) <= 5:
+                        score = int(char)
+                        break
+                
+                if score is None:
+                    score = 3  # Default score if parsing fails
+                    
+                citation_with_score = citation.copy()
+                citation_with_score['llm_score'] = score
+                citation_with_score['llm_explanation'] = llm_response
+                
+                # Update the scored_citations list
+                original_index = citation_index_map[i]
+                scored_citations[original_index] = citation_with_score
+                
+                # Store for cache
+                citation_hash = hashlib.md5(citation['text'].encode()).hexdigest()
+                new_scores[citation_hash] = {
+                    'llm_score': score,
+                    'llm_explanation': llm_response
+                }
+                
+            except Exception as e:
+                console.print(f"[yellow]Error scoring citation {i+1}: {e}[/yellow]")
+                citation_with_score = citation.copy()
+                citation_with_score['llm_score'] = 3  # Default score
+                citation_with_score['llm_explanation'] = f"Error during scoring: {e}"
+                
+                original_index = citation_index_map[i]
+                scored_citations[original_index] = citation_with_score
+                
+                citation_hash = hashlib.md5(citation['text'].encode()).hexdigest()
+                new_scores[citation_hash] = {
+                    'llm_score': 3,
+                    'llm_explanation': f"Error during scoring: {e}"
+                }
             
-            # Update the scored_citations list
-            original_index = citation_index_map[i]
-            scored_citations[original_index] = citation_with_score
-            
-            # Store for cache
-            citation_hash = hashlib.md5(citation['text'].encode()).hexdigest()
-            new_scores[citation_hash] = {
-                'llm_score': score,
-                'llm_explanation': llm_response
-            }
-            
-        except Exception as e:
-            click.echo(f"Error scoring citation: {e}")
-            citation_with_score = citation.copy()
-            citation_with_score['llm_score'] = 3  # Default score
-            citation_with_score['llm_explanation'] = f"Error during scoring: {e}"
-            
-            original_index = citation_index_map[i]
-            scored_citations[original_index] = citation_with_score
-            
-            citation_hash = hashlib.md5(citation['text'].encode()).hexdigest()
-            new_scores[citation_hash] = {
-                'llm_score': 3,
-                'llm_explanation': f"Error during scoring: {e}"
-            }
+            progress.advance(task)
+    
+    console.print(f"[green]✓ Scored {len(citations_to_score)} citations[/green]")
     
     # Save new scores to cache
     if use_cache and new_scores:
@@ -391,9 +495,9 @@ Respond with just the number (1-5) and a brief explanation.
             
             with open(scores_cache, 'w', encoding='utf-8') as f:
                 json.dump(existing_scores, f, ensure_ascii=False, indent=2)
-            click.echo(f"Saved {len(new_scores)} new scores to cache: {scores_cache}")
+            console.print(f"[dim]Saved {len(new_scores)} new scores to cache[/dim]")
         except Exception as e:
-            click.echo(f"Failed to save scores cache: {e}")
+            console.print(f"[yellow]Failed to save scores cache: {e}[/yellow]")
     
     return [c for c in scored_citations if c is not None]
 
@@ -426,18 +530,33 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
     async def run_workflow():
         use_cache = not no_cache
         
+        # Validate API keys first
+        validate_api_keys(bookwyrm_api_key, openai_api_key)
+        
         # Clear cache if requested
         if clear_cache:
             clear_cache(pdf_path)
         
         # Read query document
-        with open(query_document, 'r', encoding='utf-8') as f:
-            query = f.read().strip()
+        try:
+            with open(query_document, 'r', encoding='utf-8') as f:
+                query = f.read().strip()
+        except Exception as e:
+            console.print(f"[red]Failed to read query document: {e}[/red]")
+            raise click.ClickException(f"Query document read failed: {e}")
         
-        click.echo(f"Query: {query}")
+        # Display workflow info
+        console.print(Panel.fit(
+            f"[bold blue]Citation Workflow[/bold blue]\n\n"
+            f"[bold]PDF:[/bold] {pdf_path}\n"
+            f"[bold]Query:[/bold] {query[:100]}{'...' if len(query) > 100 else ''}\n"
+            f"[bold]Cache:[/bold] {'Enabled' if use_cache else 'Disabled'}",
+            title="Starting Analysis"
+        ))
+        
         if use_cache:
             cache_dir = get_cache_dir(pdf_path)
-            click.echo(f"Cache directory: {cache_dir}")
+            console.print(f"[dim]Cache directory: {cache_dir}[/dim]")
         
         # Step 1: Extract PDF text with page mapping
         raw_text, page_mapper = await extract_pdf_text(pdf_path, bookwyrm_api_key, use_cache)
@@ -480,25 +599,45 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
         
         # Output results
         if output:
-            with open(output, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-            click.echo(f"Results saved to: {output}")
+            try:
+                with open(output, 'w', encoding='utf-8') as f:
+                    json.dump(results, f, indent=2, ensure_ascii=False)
+                console.print(f"[green]✓ Results saved to: {output}[/green]")
+            except Exception as e:
+                console.print(f"[red]Failed to save results: {e}[/red]")
+                raise click.ClickException(f"Failed to save results: {e}")
         else:
-            click.echo("\n" + "="*50)
-            click.echo("RESULTS")
-            click.echo("="*50)
-            click.echo(f"Total citations found: {len(scored_citations)}")
-            click.echo(f"Average LLM score: {results['summary']['average_score']:.2f}")
-            click.echo("\nScore distribution:")
-            for score, count in results['summary']['score_distribution'].items():
-                click.echo(f"  Score {score}: {count} citations")
+            # Display results in a nice table
+            console.print("\n")
+            console.print(Panel.fit(
+                f"[bold green]Analysis Complete![/bold green]\n\n"
+                f"[bold]Total citations:[/bold] {len(scored_citations)}\n"
+                f"[bold]Average score:[/bold] {results['summary']['average_score']:.2f}/5.0",
+                title="Results Summary"
+            ))
             
-            click.echo("\nTop 5 citations:")
-            for i, citation in enumerate(scored_citations[:5]):
-                click.echo(f"\n{i+1}. Score: {citation['llm_score']}/5")
-                click.echo(f"   Pages: {citation.get('start_page', '?')}-{citation.get('end_page', '?')}")
-                click.echo(f"   Text: {citation['text'][:200]}...")
-                click.echo(f"   LLM: {citation['llm_explanation']}")
+            # Score distribution table
+            table = Table(title="Score Distribution")
+            table.add_column("Score", style="cyan", no_wrap=True)
+            table.add_column("Count", style="magenta")
+            table.add_column("Percentage", style="green")
+            
+            total = len(scored_citations)
+            for score in range(1, 6):
+                count = results['summary']['score_distribution'][str(score)]
+                percentage = (count / total * 100) if total > 0 else 0
+                table.add_row(f"{score}/5", str(count), f"{percentage:.1f}%")
+            
+            console.print(table)
+            
+            # Top citations
+            if scored_citations:
+                console.print("\n[bold]Top 5 Citations:[/bold]")
+                for i, citation in enumerate(scored_citations[:5]):
+                    console.print(f"\n[bold cyan]{i+1}. Score: {citation['llm_score']}/5[/bold cyan]")
+                    console.print(f"[dim]Pages: {citation.get('start_page', '?')}-{citation.get('end_page', '?')}[/dim]")
+                    console.print(f"[white]{citation['text'][:200]}{'...' if len(citation['text']) > 200 else ''}[/white]")
+                    console.print(f"[yellow]LLM: {citation['llm_explanation']}[/yellow]")
     
     # Run the async workflow
     asyncio.run(run_workflow())
