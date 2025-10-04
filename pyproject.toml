@@ -1,11 +1,14 @@
 [project]
 name = "citation-workflow"
 version = "0.1.0"
-description = "Add your description here"
+description = "CLI for extracting text from PDFs, finding citations, and scoring events with LLM"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "bookwyrm>=0.1.7",
+    "click>=8.0.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [build-system]
@@ -13,4 +16,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-hello = "citation_workflow.main:main"
+citation-workflow = "citation_workflow.main:main"
