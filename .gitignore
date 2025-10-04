@@ -47,6 +47,9 @@ results.json
 *.pdf
 query_*.txt
 
+# Citation workflow cache
+.citation_cache/
+
 # Nix/direnv
 .direnv/
 result
