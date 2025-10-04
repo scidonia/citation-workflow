@@ -160,9 +160,12 @@ async def extract_pdf_text(pdf_path: str, api_key: Optional[str] = None, use_cac
             console.print("  • Network connectivity issues")
             console.print("  • PDF file is corrupted or unsupported")
             console.print("  • BookWyrm service is temporarily unavailable")
+            console.print(f"[dim]API key present: {'Yes' if api_key else 'No'}[/dim]")
+            console.print(f"[dim]PDF file size: {len(pdf_bytes):,} bytes[/dim]")
             raise click.ClickException(f"PDF extraction failed: {e}")
         except Exception as e:
             console.print(f"[red]Unexpected error during PDF extraction: {e}[/red]")
+            console.print(f"[dim]Error type: {type(e).__name__}[/dim]")
             raise click.ClickException(f"PDF extraction failed: {e}")
     
     console.print(f"[green]✓ Extracted {len(raw_text):,} characters from {response.total_pages} pages[/green]")
@@ -230,9 +233,27 @@ async def process_text_to_chunks(text: str, pdf_path: str, api_key: Optional[str
         
         except BookWyrmAPIError as e:
             console.print(f"[red]BookWyrm API Error during text processing: {e}[/red]")
+            console.print("[yellow]Debugging information:[/yellow]")
+            console.print(f"  • API key present: {'Yes' if api_key else 'No'}")
+            console.print(f"  • Text length: {len(text):,} characters")
+            console.print(f"  • Error details: {str(e)}")
+            if hasattr(e, 'status_code'):
+                console.print(f"  • HTTP status code: {e.status_code}")
+            if hasattr(e, 'response') and e.response:
+                try:
+                    console.print(f"  • Response content: {e.response.text[:500]}...")
+                except:
+                    console.print("  • Response content: Unable to read")
+            console.print("[yellow]Possible solutions:[/yellow]")
+            console.print("  • Check your BookWyrm API key is valid")
+            console.print("  • Verify network connectivity")
+            console.print("  • Try with a smaller text sample")
+            console.print("  • Check BookWyrm service status")
             raise click.ClickException(f"Text processing failed: {e}")
         except Exception as e:
             console.print(f"[red]Unexpected error during text processing: {e}[/red]")
+            console.print(f"[dim]Error type: {type(e).__name__}[/dim]")
+            console.print(f"[dim]Text length: {len(text):,} characters[/dim]")
             raise click.ClickException(f"Text processing failed: {e}")
     
     console.print(f"[green]✓ Created {len(chunks)} text chunks[/green]")
@@ -314,9 +335,29 @@ async def find_citations(chunks: List[TextSpan], query: str, pdf_path: str, api_
         
         except BookWyrmAPIError as e:
             console.print(f"[red]BookWyrm API Error during citation search: {e}[/red]")
+            console.print("[yellow]Debugging information:[/yellow]")
+            console.print(f"  • API key present: {'Yes' if api_key else 'No'}")
+            console.print(f"  • Number of chunks: {len(chunks)}")
+            console.print(f"  • Query length: {len(query)} characters")
+            console.print(f"  • Error details: {str(e)}")
+            if hasattr(e, 'status_code'):
+                console.print(f"  • HTTP status code: {e.status_code}")
+            if hasattr(e, 'response') and e.response:
+                try:
+                    console.print(f"  • Response content: {e.response.text[:500]}...")
+                except:
+                    console.print("  • Response content: Unable to read")
+            console.print("[yellow]Possible solutions:[/yellow]")
+            console.print("  • Check your BookWyrm API key is valid")
+            console.print("  • Verify network connectivity")
+            console.print("  • Try with fewer chunks or shorter query")
+            console.print("  • Check BookWyrm service status")
             raise click.ClickException(f"Citation search failed: {e}")
         except Exception as e:
             console.print(f"[red]Unexpected error during citation search: {e}[/red]")
+            console.print(f"[dim]Error type: {type(e).__name__}[/dim]")
+            console.print(f"[dim]Number of chunks: {len(chunks)}[/dim]")
+            console.print(f"[dim]Query: {query[:100]}...[/dim]")
             raise click.ClickException(f"Citation search failed: {e}")
     
     console.print(f"[green]✓ Found {len(citations)} citations[/green]")
@@ -393,6 +434,10 @@ def score_citations_with_llm(citations: List[dict], query: str, pdf_path: str, o
         client = OpenAI(api_key=openai_api_key)
     except Exception as e:
         console.print(f"[red]Failed to initialize OpenAI client: {e}[/red]")
+        console.print("[yellow]Debugging information:[/yellow]")
+        console.print(f"  • API key present: {'Yes' if openai_api_key else 'No'}")
+        console.print(f"  • Error type: {type(e).__name__}")
+        console.print(f"  • Error details: {str(e)}")
         raise click.ClickException(f"OpenAI initialization failed: {e}")
     
     new_scores = {}
@@ -465,6 +510,9 @@ Respond with just the number (1-5) and a brief explanation.
                 
             except Exception as e:
                 console.print(f"[yellow]Error scoring citation {i+1}: {e}[/yellow]")
+                console.print(f"[dim]Error type: {type(e).__name__}[/dim]")
+                if hasattr(e, 'status_code'):
+                    console.print(f"[dim]HTTP status: {e.status_code}[/dim]")
                 citation_with_score = citation.copy()
                 citation_with_score['llm_score'] = 3  # Default score
                 citation_with_score['llm_explanation'] = f"Error during scoring: {e}"
@@ -510,9 +558,10 @@ Respond with just the number (1-5) and a brief explanation.
 @click.option('--openai-api-key', envvar='OPENAI_API_KEY', help='OpenAI API key')
 @click.option('--no-cache', is_flag=True, help='Disable caching (process everything fresh)')
 @click.option('--clear-cache', is_flag=True, help='Clear existing cache before processing')
+@click.option('--debug', is_flag=True, help='Enable debug mode with verbose error information')
 def main(pdf_path: str, query_document: str, output: Optional[str], 
          bookwyrm_api_key: Optional[str], openai_api_key: Optional[str],
-         no_cache: bool, clear_cache: bool):
+         no_cache: bool, clear_cache: bool, debug: bool):
     """
     Citation workflow CLI.
     
@@ -529,6 +578,11 @@ def main(pdf_path: str, query_document: str, output: Optional[str],
     
     async def run_workflow():
         use_cache = not no_cache
+        
+        # Set debug mode globally
+        if debug:
+            console.print("[dim]Debug mode enabled - verbose error reporting[/dim]")
+            os.environ['BOOKWYRM_DEBUG'] = '1'
         
         # Validate API keys first
         validate_api_keys(bookwyrm_api_key, openai_api_key)
