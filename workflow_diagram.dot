@@ -1,0 +1,153 @@
+digraph CitationWorkflow {
+    // Graph attributes for better layout
+    rankdir=TB;
+    bgcolor="white";
+    fontname="Arial";
+    fontsize=14;
+    
+    // Node styling
+    node [
+        fontname="Arial",
+        fontsize=12,
+        style=filled,
+        shape=box,
+        margin=0.2
+    ];
+    
+    // Edge styling
+    edge [
+        fontname="Arial",
+        fontsize=10,
+        color="#333333"
+    ];
+    
+    // Input nodes
+    pdf_input [label="PDF Document", fillcolor="#E8F4FD", shape=note];
+    query_input [label="Query Document\n(Event Description)", fillcolor="#E8F4FD", shape=note];
+    
+    // API Keys
+    bookwyrm_key [label="BookWyrm\nAPI Key", fillcolor="#FFF2CC", shape=ellipse];
+    openai_key [label="OpenAI\nAPI Key", fillcolor="#FFF2CC", shape=ellipse];
+    
+    // Main processing stages
+    subgraph cluster_extraction {
+        label="PDF Text Extraction";
+        style=filled;
+        fillcolor="#F0F8FF";
+        
+        extract_pdf [label="extract_pdf_text()\n• Send PDF to BookWyrm API\n• Extract text from all pages\n• Create character-to-page mapping", fillcolor="#B8E6B8"];
+        page_mapper [label="CharacterToPageMapper\n• Maps char positions to pages\n• Tracks page boundaries", fillcolor="#D4EDDA"];
+    }
+    
+    subgraph cluster_processing {
+        label="Text Processing";
+        style=filled;
+        fillcolor="#F8F9FA";
+        
+        process_chunks [label="process_text_to_chunks()\n• Use BookWyrm phrasal model\n• Split into semantic chunks\n• Maintain character offsets", fillcolor="#B8E6B8"];
+        text_spans [label="List[TextSpan]\n• Semantic text chunks\n• With start/end positions", fillcolor="#D4EDDA"];
+    }
+    
+    subgraph cluster_citation {
+        label="Citation Discovery";
+        style=filled;
+        fillcolor="#FFF8E1";
+        
+        find_citations [label="find_citations()\n• Stream citations from BookWyrm\n• Match chunks to query\n• Extract relevant passages", fillcolor="#FFE082"];
+        citations [label="Citations\n• Text passages\n• Reasoning\n• Quality scores\n• Chunk references", fillcolor="#FFF3C4"];
+    }
+    
+    subgraph cluster_scoring {
+        label="LLM Scoring";
+        style=filled;
+        fillcolor="#F3E5F5";
+        
+        llm_scoring [label="score_citations_with_llm()\n• Use OpenAI GPT-3.5-turbo\n• Score relevance (1-5)\n• Generate explanations", fillcolor="#CE93D8"];
+        scored_citations [label="Scored Citations\n• Original citation data\n• LLM relevance score\n• Score explanation", fillcolor="#E1BEE7"];
+    }
+    
+    subgraph cluster_caching {
+        label="Caching System";
+        style=filled;
+        fillcolor="#E8F5E8";
+        
+        cache_dir [label="get_cache_dir()\n• PDF-specific cache folder\n• Hash-based naming", fillcolor="#C8E6C9"];
+        extraction_cache [label="extraction.json\n• Raw text\n• Page mappings", fillcolor="#A5D6A7"];
+        chunks_cache [label="chunks.json\n• Text spans\n• Character offsets", fillcolor="#A5D6A7"];
+        citations_cache [label="citations_{hash}.json\n• Query-specific citations", fillcolor="#A5D6A7"];
+        scores_cache [label="scores_{hash}.json\n• LLM scores by text hash", fillcolor="#A5D6A7"];
+    }
+    
+    // Output
+    results_json [label="Results JSON\n• All citations with scores\n• Page references\n• Summary statistics", fillcolor="#FFCDD2", shape=note];
+    console_output [label="Console Display\n• Score distribution table\n• Top 5 citations\n• Progress indicators", fillcolor="#FFCDD2", shape=note];
+    
+    // Main workflow connections
+    pdf_input -> extract_pdf;
+    bookwyrm_key -> extract_pdf;
+    extract_pdf -> page_mapper;
+    extract_pdf -> process_chunks;
+    bookwyrm_key -> process_chunks;
+    process_chunks -> text_spans;
+    text_spans -> find_citations;
+    query_input -> find_citations;
+    bookwyrm_key -> find_citations;
+    find_citations -> citations;
+    citations -> llm_scoring;
+    openai_key -> llm_scoring;
+    llm_scoring -> scored_citations;
+    
+    // Add page info
+    page_mapper -> scored_citations [label="add page\nreferences", style=dashed];
+    
+    // Output generation
+    scored_citations -> results_json [label="sort by score"];
+    scored_citations -> console_output [label="display top results"];
+    
+    // Caching connections
+    pdf_input -> cache_dir [style=dashed, color="#666666"];
+    cache_dir -> extraction_cache [style=dashed, color="#666666"];
+    cache_dir -> chunks_cache [style=dashed, color="#666666"];
+    cache_dir -> citations_cache [style=dashed, color="#666666"];
+    cache_dir -> scores_cache [style=dashed, color="#666666"];
+    
+    extraction_cache -> extract_pdf [label="load if exists", style=dashed, color="#666666"];
+    chunks_cache -> process_chunks [label="load if exists", style=dashed, color="#666666"];
+    citations_cache -> find_citations [label="load if exists", style=dashed, color="#666666"];
+    scores_cache -> llm_scoring [label="load if exists", style=dashed, color="#666666"];
+    
+    extract_pdf -> extraction_cache [label="save", style=dashed, color="#666666"];
+    process_chunks -> chunks_cache [label="save", style=dashed, color="#666666"];
+    find_citations -> citations_cache [label="save", style=dashed, color="#666666"];
+    llm_scoring -> scores_cache [label="save", style=dashed, color="#666666"];
+    
+    // Error handling paths (simplified)
+    subgraph cluster_error {
+        label="Error Handling";
+        style=filled;
+        fillcolor="#FFEBEE";
+        
+        api_validation [label="validate_api_keys()\n• Check required keys\n• Early failure", fillcolor="#FFCDD2"];
+        error_reporting [label="Rich Console\n• Detailed error messages\n• Debug information\n• Troubleshooting tips", fillcolor="#FFCDD2"];
+    }
+    
+    bookwyrm_key -> api_validation [style=dashed];
+    openai_key -> api_validation [style=dashed];
+    api_validation -> extract_pdf [style=dashed];
+    
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=filled;
+        fillcolor="#FAFAFA";
+        
+        legend_input [label="Input/Output", fillcolor="#E8F4FD", shape=note];
+        legend_process [label="Processing Function", fillcolor="#B8E6B8"];
+        legend_data [label="Data Structure", fillcolor="#D4EDDA"];
+        legend_cache [label="Cache File", fillcolor="#A5D6A7"];
+        legend_config [label="Configuration", fillcolor="#FFF2CC", shape=ellipse];
+    }
+    
+    // Position legend at bottom
+    {rank=max; legend_input; legend_process; legend_data; legend_cache; legend_config;}
+}
