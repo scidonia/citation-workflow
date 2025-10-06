@@ -10,6 +10,12 @@ A command-line tool for extracting text from PDFs, finding citations related to 
 - **Citation Finding**: Uses BookWyrm's citation model to find evidence related to query events
 - **LLM Scoring**: Uses OpenAI's GPT-3.5-turbo to score citations on a 1-5 scale (1=unrelated, 5=comprehensive)
 
+## Workflow Diagram
+
+![Citation Workflow](workflow_diagram.png)
+
+The diagram above shows the complete processing flow from PDF input through to scored citations and results output. Each stage processes data through BookWyrm APIs or OpenAI, with clear data structures passed between stages.
+
 ## Installation
 
 ```bash
